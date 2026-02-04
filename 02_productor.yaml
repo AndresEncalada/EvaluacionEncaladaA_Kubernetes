@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sensor-script
+data:
+  app.py: |
+    import os
+    import time
+    import json
+    import random
+    import redis
+    from datetime import datetime
+    import sys
+
+    host = os.getenv("REDIS_HOST")
+    password = os.getenv("REDIS_PASS")
+    
+    r = None
+    while r is None:
+        try:
+            r = redis.Redis(host=host, port=6379, password=password, db=0, decode_responses=True)
+        except Exception:
+            time.sleep(5)
+            r = None
+
+    while True:
+        try:
+            data = {
+                "sensor_id": "rbt-01",
+                "valor": random.randint(1, 100),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            json_data = json.dumps(data)
+            r.lpush("sensores_data", json_data)
+            
+        except Exception:
+            print("Error enviando dato")
+            
+        time.sleep(3)
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sensor-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sensor
+  template:
+    metadata:
+      labels:
+        app: sensor
+    spec:
+      containers:
+      - name: python-worker
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install redis && python /app/app.py"]
+        env:
+        - name: REDIS_HOST
+          value: "redis-service"
+        - name: REDIS_PASS
+          valueFrom:
+            secretKeyRef:
+              name: redis-secret
+              key: redis-password
+        volumeMounts:
+        - name: script-vol
+          mountPath: /app
+      volumes:
+      - name: script-vol
+        configMap:
+          name: sensor-script
